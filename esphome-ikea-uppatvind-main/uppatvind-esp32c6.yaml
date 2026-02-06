@@ -1,0 +1,250 @@
+# ESPHome configuration for IKEA UPPÅTVIND Air Purifier
+# Ported to ESP32-C6 SuperMini with AHT20+BMP280 sensor support
+#
+# Hardware Connections (using safe pins on ESP32-C6 SuperMini):
+#
+# UPPÅTVIND Control:
+#   - TP2 (GND)     -> GND
+#   - TP3 (5V)      -> 5V (via USB or external supply)
+#   - TP4 (Button)  -> GPIO0 (button press simulation)
+#   - TP7 (LED)     -> GPIO1 (LED brightness sensing)
+#
+# AHT20+BMP280 Sensor Board (I2C):
+#   - VDD -> 3.3V
+#   - GND -> GND
+#   - SDA -> GPIO21
+#   - SCL -> GPIO22
+#
+# Note: ESP32-C6 pins are 3.3V while UPPÅTVIND uses 5V logic.
+# A level shifter is recommended but optional.
+
+esphome:
+  name: uppatvind-esp32c6
+  friendly_name: "UPPÅTVIND Air Purifier"
+
+esp32:
+  variant: esp32c6
+  board: esp32-c6-devkitc-1
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+
+# Disable logging for cleaner production build
+logger:
+  level: NONE
+  baud_rate: 0
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+# Enable OTA updates
+ota:
+  platform: esphome
+  password: !secret ota_password
+
+# WiFi configuration
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Uppatvind-Fallback"
+    password: "fallback123"
+
+captive_portal:
+
+# Bluetooth WiFi provisioning - configure new WiFi without reflashing
+# Use ESPHome or Home Assistant app to set new WiFi credentials
+esp32_improv:
+  authorizer: none
+
+# Web server for local control
+web_server:
+  port: 80
+
+# I2C bus for AHT20+BMP280 sensors
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  scan: true
+  id: bus_a
+
+# Global variables for fan speed control
+globals:
+  - id: target_level
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: loop_count
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+# Script to adjust fan speed by pressing the button until target reached
+script:
+  - id: adjust_fan_speed
+    mode: restart
+    then:
+      - globals.set:
+          id: loop_count
+          value: '0'
+      - while:
+          condition:
+            lambda: |-
+              // Stop if target reached OR if we've tried too many times (failsafe)
+              return id(led1).state != id(target_level) && id(loop_count) < 15;
+          then:
+            # - logger.log:
+            #     format: "Adjusting fan: Sensor=%d Target=%d (Attempt %d)"
+            #     args: [ 'int(id(led1).state)', 'id(target_level)', 'id(loop_count)' ]
+            - button.press: uppatvind_button
+            - delay: 3s
+            - lambda: 'id(loop_count) += 1;'
+
+# Sensors
+sensor:
+  # UPPÅTVIND LED pulse width sensor (fan speed indicator)
+  - platform: pulse_width
+    pin: GPIO1
+    id: led1
+    name: "UPPÅTVIND Fan Speed LED"
+    update_interval: 0.25s
+    accuracy_decimals: 0
+    unit_of_measurement: ""
+    icon: mdi:led-outline
+    filters:
+      # Pulse width values multiplied by 1000000: 0=off, 20=low, 100=med, 320=high
+      - multiply: 1000000
+      - lambda: !lambda |-
+          int y = int(x);
+          // ESP_LOGD("led_debug", "Pulse Width: %d", y);
+
+          // Widened tolerances for reliability
+          if (y >= 10 and y <= 60) {
+            return 1;  // Low (~20)
+          } else if (y >= 80 and y <= 150) {
+            return 2;  // Medium (~100)
+          } else if (y >= 250 and y <= 450) {
+            return 3;  // High (~320)
+          } else {
+            return 0;  // Off
+          }
+      - max:
+          window_size: 3
+          send_every: 3
+          send_first_at: 1
+      - or:
+        - delta: 0.5
+        - throttle: 60s
+
+  # AHT20 Temperature and Humidity Sensor
+  - platform: aht10
+    variant: AHT20
+    temperature:
+      name: "Temperature"
+      id: aht20_temp
+      filters:
+        - offset: -5.42
+    humidity:
+      name: "Humidity"
+      id: aht20_humidity
+      filters:
+        - offset: 0.0
+    update_interval: 30s
+
+  # BMP280 Temperature and Pressure Sensor
+  - platform: bmp280_i2c
+    temperature:
+      name: "BMP280 Temperature"
+      id: bmp280_temp
+      oversampling: 16x
+      filters:
+        - offset: -5.8
+    pressure:
+      name: "Atmospheric Pressure"
+      id: bmp280_pressure
+    address: 0x77  # Common address, may be 0x76 on some boards
+    update_interval: 30s
+
+  # Sensors removed for optimization: wifi_signal, uptime
+
+# GPIO output for button simulation
+output:
+  - platform: gpio
+    pin:
+      number: GPIO0
+      inverted: true
+      # Open drain prevents the ESP from pulling the pin when not pressed
+      mode: OUTPUT_OPEN_DRAIN
+    id: output_button
+
+# Virtual button to simulate UPPÅTVIND button press
+button:
+  - platform: output
+    id: uppatvind_button
+    name: "UPPÅTVIND Button"
+    output: output_button
+    duration: 100ms
+
+  # Restart button for convenience
+  - platform: restart
+    name: "Restart"
+
+# Template fan for speed control
+fan:
+  - platform: template
+    name: "UPPÅTVIND Fan"
+    id: uppatvind_fan
+    speed_count: 100  # Allows percentage control in Home Assistant
+
+    on_turn_off:
+      - lambda: |-
+          id(target_level) = 0;
+      - script.execute: adjust_fan_speed
+
+    on_turn_on:
+      - lambda: |-
+          if (id(target_level) == 0) {
+            id(target_level) = 1;
+          }
+      - script.execute: adjust_fan_speed
+
+    on_speed_set:
+      - lambda: |-
+          int pct = x;
+          int lvl = 0;
+
+          if (pct < 2 ) {
+            lvl = 0;
+          } else if (pct <= 33) {
+            lvl = 1;  // Low
+          } else if (pct <= 66) {
+            lvl = 2;  // Medium
+          } else {
+            lvl = 3;  // High
+          }
+
+          // ESP_LOGI("fan", "Requested %d%% → level %d", pct, lvl);
+          id(target_level) = lvl;
+      - script.execute: adjust_fan_speed
+
+# Text sensors for diagnostics
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "Connected SSID"
+    mac_address:
+      name: "MAC Address"
+
+  - platform: version
+    name: "ESPHome Version"
+
+# Binary sensor for connection status
+binary_sensor:
+  - platform: status
+    name: "Status"
