@@ -135,6 +135,18 @@ When connected to Home Assistant, the following entities are available:
 - **Configuration**: Restart button.
 
 
+
+### Firmware Updates
+The primary method to update this device is **OTA (Over-The-Air)**:
+
+- **Via ESPHome Dashboard**: If you have the dashboard running (e.g., in Home Assistant), just click "Update".
+- **Via CLI**: Run `esphome run uppatvind-esp32c6.yaml` to compile and upload wirelessly.
+- **Via Web Portal**:  Navigate to `http://uppatvind-esp32c6.local` (or the device IP).
+   - Click the **"OTA Update"** button in the bottom left corner.
+   - Select your compiled `.bin` firmware file to upload it directly.
+
+
+
 ---
 
 ## Notes
