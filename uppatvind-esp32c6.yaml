@@ -147,7 +147,7 @@ sensor:
       name: "Temperature"
       id: aht20_temp
       filters:
-        - offset: -5.42
+        - offset: -4.42
     humidity:
       name: "Humidity"
       id: aht20_humidity
@@ -162,7 +162,7 @@ sensor:
       id: bmp280_temp
       oversampling: 16x
       filters:
-        - offset: -5.8
+        - offset: -4.8
     pressure:
       name: "Atmospheric Pressure"
       id: bmp280_pressure
