@@ -21,6 +21,11 @@
 esphome:
   name: uppatvind-esp32c6
   friendly_name: "UPPÅTVIND Air Purifier"
+  on_boot:
+    priority: -100  # Run after everything else is initialized
+    then:
+      - delay: 10s  # Wait for hardware to stabilize after power-on
+      - script.execute: adjust_fan_speed
 
 esp32:
   variant: esp32c6
