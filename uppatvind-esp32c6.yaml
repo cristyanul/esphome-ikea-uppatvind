@@ -81,7 +81,7 @@ i2c:
 globals:
   - id: target_level
     type: int
-    restore_value: no
+    restore_value: yes
     initial_value: '0'
   - id: loop_count
     type: int
